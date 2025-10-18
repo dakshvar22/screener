@@ -2,32 +2,27 @@
 // Vercel Serverless Function to fetch crypto data
 
 const CRYPTO_SYMBOLS = [
-  { symbol: 'BTCUSDT', name: 'Bitcoin' },
-  { symbol: 'ETHUSDT', name: 'Ethereum' },
-  { symbol: 'BNBUSDT', name: 'BNB' },
-  { symbol: 'SOLUSDT', name: 'Solana' },
-  { symbol: 'XRPUSDT', name: 'XRP' },
-  { symbol: 'ADAUSDT', name: 'Cardano' },
-  { symbol: 'AVAXUSDT', name: 'Avalanche' },
-  { symbol: 'DOTUSDT', name: 'Polkadot' },
-  { symbol: 'MATICUSDT', name: 'Polygon' },
-  { symbol: 'LINKUSDT', name: 'Chainlink' },
-  { symbol: 'UNIUSDT', name: 'Uniswap' },
-  { symbol: 'LTCUSDT', name: 'Litecoin' },
-  { symbol: 'NEARUSDT', name: 'NEAR' },
-  { symbol: 'APTUSDT', name: 'Aptos' },
-  { symbol: 'ARBUSDT', name: 'Arbitrum' },
-  { symbol: 'OPUSDT', name: 'Optimism' },
-  { symbol: 'DOGEUSDT', name: 'Dogecoin' },
-  { symbol: 'XLMUSDT', name: 'Stellar' },
-  { symbol: 'ATOMUSDT', name: 'Cosmos' },
-  { symbol: 'INJUSDT', name: 'Injective' }
+  { symbol: 'BTC-USD', name: 'Bitcoin' },
+  { symbol: 'ETH-USD', name: 'Ethereum' },
+  { symbol: 'SOL-USD', name: 'Solana' },
+  { symbol: 'XRP-USD', name: 'XRP' },
+  { symbol: 'ADA-USD', name: 'Cardano' },
+  { symbol: 'AVAX-USD', name: 'Avalanche' },
+  { symbol: 'DOT-USD', name: 'Polkadot' },
+  { symbol: 'MATIC-USD', name: 'Polygon' },
+  { symbol: 'LINK-USD', name: 'Chainlink' },
+  { symbol: 'UNI-USD', name: 'Uniswap' },
+  { symbol: 'LTC-USD', name: 'Litecoin' },
+  { symbol: 'NEAR-USD', name: 'NEAR' },
+  { symbol: 'DOGE-USD', name: 'Dogecoin' },
+  { symbol: 'XLM-USD', name: 'Stellar' },
+  { symbol: 'ATOM-USD', name: 'Cosmos' }
 ];
 
 const TIMEFRAME_CONFIG = {
-  '1h': { interval: '1h', limit: 500 },
-  '4h': { interval: '4h', limit: 500 },
-  '1d': { interval: '1d', limit: 500 }
+  '1h': { granularity: 3600, candles: 500 },    // 1 hour in seconds
+  '4h': { granularity: 14400, candles: 500 },   // 4 hours in seconds
+  '1d': { granularity: 86400, candles: 500 }    // 1 day in seconds
 };
 
 const aggregateCandles = (prices, interval) => {
@@ -68,10 +63,14 @@ export default async function handler(req, res) {
   console.log('Starting crypto data fetch...');
 
   try {
-    console.log('Processing', CRYPTO_SYMBOLS.length, 'symbols with', timeframeConfig.limit, 'candles');
+    console.log('Processing', CRYPTO_SYMBOLS.length, 'symbols with', timeframeConfig.candles, 'candles');
 
-    // Process coins in batches - Binance has much higher rate limits
-    const BATCH_SIZE = 10;
+    // Calculate time range
+    const now = Math.floor(Date.now() / 1000);
+    const start = now - (timeframeConfig.candles * timeframeConfig.granularity);
+
+    // Process coins in batches - Coinbase has good rate limits
+    const BATCH_SIZE = 5;
     const batches = [];
 
     for (let i = 0; i < CRYPTO_SYMBOLS.length; i += BATCH_SIZE) {
@@ -81,8 +80,8 @@ export default async function handler(req, res) {
     for (const batch of batches) {
       const promises = batch.map(async (crypto) => {
         try {
-          // Binance klines API endpoint
-          const url = `https://api.binance.com/api/v3/klines?symbol=${crypto.symbol}&interval=${timeframeConfig.interval}&limit=${timeframeConfig.limit}`;
+          // Coinbase Pro API endpoint
+          const url = `https://api.exchange.coinbase.com/products/${crypto.symbol}/candles?start=${start}&end=${now}&granularity=${timeframeConfig.granularity}`;
 
           const response = await fetch(url, {
             headers: {
@@ -100,13 +99,16 @@ export default async function handler(req, res) {
           const result = await response.json();
 
           if (!result || result.length === 0) {
-            errors.push(`${crypto.name}: No kline data returned`);
+            errors.push(`${crypto.name}: No candle data returned`);
             return null;
           }
 
-          // Convert Binance kline format to [timestamp, price]
-          // Binance returns: [openTime, open, high, low, close, volume, closeTime, ...]
-          const prices = result.map(kline => [kline[0], parseFloat(kline[4])]); // [timestamp, close price]
+          // Convert Coinbase format to [timestamp, price]
+          // Coinbase returns: [timestamp, low, high, open, close, volume]
+          const prices = result.map(candle => [candle[0] * 1000, parseFloat(candle[4])]); // [timestamp in ms, close price]
+
+          // Sort by timestamp (Coinbase returns newest first)
+          prices.sort((a, b) => a[0] - b[0]);
 
           if (prices && prices.length >= 200) {
             return {
@@ -129,7 +131,7 @@ export default async function handler(req, res) {
 
       // Small delay between batches
       if (batches.indexOf(batch) < batches.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
     }
 
@@ -139,7 +141,7 @@ export default async function handler(req, res) {
       coins: results,
       errors: errors,
       debug: {
-        message: 'All coins processed via Binance API',
+        message: 'All coins processed via Coinbase API',
         totalCoins: CRYPTO_SYMBOLS.length,
         successfulCoins: results.length,
         timeframeConfig: timeframeConfig

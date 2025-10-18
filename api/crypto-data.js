@@ -16,8 +16,8 @@ const CRYPTO_SYMBOLS = [
   { symbol: 'DOGE', name: 'Dogecoin' }
 ];
 
-// Alpha Vantage free demo key - replace with your own for production
-const API_KEY = 'demo';
+// Alpha Vantage API key
+const API_KEY = 'JWP1USI7NXB04KOP';
 
 const aggregateCandles = (prices, interval) => {
   if (!interval || interval === 1) return prices;

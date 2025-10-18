@@ -20,9 +20,9 @@ const CRYPTO_SYMBOLS = [
 ];
 
 const TIMEFRAME_CONFIG = {
-  '1h': { granularity: 3600, candles: 500 },    // 1 hour in seconds
-  '4h': { granularity: 14400, candles: 500 },   // 4 hours in seconds
-  '1d': { granularity: 86400, candles: 500 }    // 1 day in seconds
+  '1h': { granularity: 3600, candles: 300 },    // 1 hour (3600s) - supported by Coinbase
+  '4h': { granularity: 3600, candles: 1200, aggregate: 4 },   // Use 1h data and aggregate to 4h
+  '1d': { granularity: 86400, candles: 300 }    // 1 day (86400s) - supported by Coinbase
 };
 
 const aggregateCandles = (prices, interval) => {
@@ -110,10 +110,15 @@ export default async function handler(req, res) {
 
           // Convert Coinbase format to [timestamp, price]
           // Coinbase returns: [timestamp, low, high, open, close, volume]
-          const prices = result.map(candle => [candle[0] * 1000, parseFloat(candle[4])]); // [timestamp in ms, close price]
+          let prices = result.map(candle => [candle[0] * 1000, parseFloat(candle[4])]); // [timestamp in ms, close price]
 
           // Sort by timestamp (Coinbase returns newest first)
           prices.sort((a, b) => a[0] - b[0]);
+
+          // Aggregate to 4H if needed
+          if (timeframeConfig.aggregate) {
+            prices = aggregateCandles(prices, timeframeConfig.aggregate);
+          }
 
           if (prices && prices.length >= 200) {
             return {

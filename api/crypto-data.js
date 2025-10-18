@@ -4,17 +4,17 @@
 const CRYPTO_IDS = [
   { id: 'bitcoin', name: 'Bitcoin' },
   { id: 'ethereum', name: 'Ethereum' },
-  { id: 'binance-coin', name: 'BNB' },
+  { id: 'binancecoin', name: 'BNB' },
   { id: 'solana', name: 'Solana' },
   { id: 'ripple', name: 'XRP' },
   { id: 'cardano', name: 'Cardano' },
-  { id: 'avalanche', name: 'Avalanche' },
+  { id: 'avalanche-2', name: 'Avalanche' },
   { id: 'polkadot', name: 'Polkadot' },
-  { id: 'polygon', name: 'Polygon' },
+  { id: 'matic-network', name: 'Polygon' },
   { id: 'chainlink', name: 'Chainlink' },
   { id: 'uniswap', name: 'Uniswap' },
   { id: 'litecoin', name: 'Litecoin' },
-  { id: 'near-protocol', name: 'NEAR' },
+  { id: 'near', name: 'NEAR' },
   { id: 'aptos', name: 'Aptos' },
   { id: 'arbitrum', name: 'Arbitrum' },
   { id: 'optimism', name: 'Optimism' },
@@ -66,64 +66,83 @@ export default async function handler(req, res) {
   const errors = [];
 
   try {
-    // Fetch data for all coins in parallel
-    const promises = CRYPTO_IDS.map(async (crypto) => {
-      try {
-        const now = Date.now();
-        const candlesNeeded = timeframeConfig.aggregate ?
-          timeframeConfig.candles * timeframeConfig.aggregate :
-          timeframeConfig.candles;
+    // Process coins in batches to avoid rate limiting
+    const BATCH_SIZE = 5;
+    const batches = [];
 
-        let startTime, endTime;
-        if (timeframeConfig.interval === 'h1') {
-          startTime = now - (candlesNeeded * 60 * 60 * 1000);
-        } else {
-          startTime = now - (candlesNeeded * 24 * 60 * 60 * 1000);
-        }
-        endTime = now;
+    for (let i = 0; i < CRYPTO_IDS.length; i += BATCH_SIZE) {
+      batches.push(CRYPTO_IDS.slice(i, i + BATCH_SIZE));
+    }
 
-        const url = `https://api.coincap.io/v2/assets/${crypto.id}/history?interval=${timeframeConfig.interval}&start=${startTime}&end=${endTime}`;
+    for (const batch of batches) {
+      const promises = batch.map(async (crypto) => {
+        try {
+          const now = Date.now();
+          const candlesNeeded = timeframeConfig.aggregate ?
+            timeframeConfig.candles * timeframeConfig.aggregate :
+            timeframeConfig.candles;
 
-        const response = await fetch(url);
+          let startTime, endTime;
+          if (timeframeConfig.interval === 'h1') {
+            startTime = now - (candlesNeeded * 60 * 60 * 1000);
+          } else {
+            startTime = now - (candlesNeeded * 24 * 60 * 60 * 1000);
+          }
+          endTime = now;
 
-        if (!response.ok) {
-          errors.push(`${crypto.name}: HTTP ${response.status}`);
+          const url = `https://api.coincap.io/v2/assets/${crypto.id}/history?interval=${timeframeConfig.interval}&start=${startTime}&end=${endTime}`;
+
+          const response = await fetch(url, {
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'crypto-screener/1.0'
+            }
+          });
+
+          if (!response.ok) {
+            errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText}`);
+            return null;
+          }
+
+          const result = await response.json();
+
+          if (!result.data || result.data.length === 0) {
+            errors.push(`${crypto.name}: No data returned`);
+            return null;
+          }
+
+          // Convert to [timestamp, price] format
+          let prices = result.data.map(d => [d.time, parseFloat(d.priceUsd)]);
+
+          // Aggregate to 4H if needed
+          if (timeframeConfig.aggregate) {
+            prices = aggregateCandles(prices, timeframeConfig.aggregate);
+          }
+
+          if (prices && prices.length >= 300) {
+            return {
+              id: crypto.id,
+              name: crypto.name,
+              prices: prices
+            };
+          } else {
+            errors.push(`${crypto.name}: Not enough data (${prices?.length || 0} candles)`);
+            return null;
+          }
+        } catch (err) {
+          errors.push(`${crypto.name}: ${err.message}`);
           return null;
         }
+      });
 
-        const result = await response.json();
+      const batchResults = await Promise.all(promises);
+      results.push(...batchResults.filter(r => r !== null));
 
-        if (!result.data || result.data.length === 0) {
-          errors.push(`${crypto.name}: No data returned`);
-          return null;
-        }
-
-        // Convert to [timestamp, price] format
-        let prices = result.data.map(d => [d.time, parseFloat(d.priceUsd)]);
-
-        // Aggregate to 4H if needed
-        if (timeframeConfig.aggregate) {
-          prices = aggregateCandles(prices, timeframeConfig.aggregate);
-        }
-
-        if (prices && prices.length >= 300) {
-          return {
-            id: crypto.id,
-            name: crypto.name,
-            prices: prices
-          };
-        } else {
-          errors.push(`${crypto.name}: Not enough data (${prices?.length || 0} candles)`);
-          return null;
-        }
-      } catch (err) {
-        errors.push(`${crypto.name}: ${err.message}`);
-        return null;
+      // Small delay between batches to respect rate limits
+      if (batches.indexOf(batch) < batches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 200));
       }
-    });
-
-    const allResults = await Promise.all(promises);
-    results.push(...allResults.filter(r => r !== null));
+    }
 
     return res.status(200).json({
       coins: results,

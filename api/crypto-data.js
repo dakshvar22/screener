@@ -44,12 +44,10 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const { timeframe = '4h' } = req.query;
-  const timeframeConfig = TIMEFRAME_CONFIG[timeframe];
+  const { timeframe = '1d' } = req.query;
 
-  if (!timeframeConfig) {
-    return res.status(400).json({ error: 'Invalid timeframe' });
-  }
+  // Alpha Vantage only provides daily data, so timeframe is informational only
+  console.log('Requested timeframe:', timeframe, '(using daily data for all timeframes)');
 
   const results = [];
   const errors = [];

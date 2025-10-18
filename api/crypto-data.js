@@ -70,11 +70,13 @@ export default async function handler(req, res) {
       }
       endTime = now;
 
-      const url = `https://api.coincap.io/v2/assets/${testCrypto.id}/history?interval=${timeframeConfig.interval}&start=${startTime}&end=${endTime}`;
+      // Use CoinGecko API instead of CoinCap since CoinCap DNS is failing
+      const days = Math.ceil(candlesNeeded / 24); // Convert candles to days
+      const url = `https://api.coingecko.com/api/v3/coins/${testCrypto.id}/market_chart?vs_currency=usd&days=${days}&interval=hourly`;
 
       console.log('Fetching URL:', url);
-      console.log('Start time:', new Date(startTime).toISOString());
-      console.log('End time:', new Date(endTime).toISOString());
+      console.log('Days requested:', days);
+      console.log('Candles needed:', candlesNeeded);
 
       const response = await fetch(url, {
         headers: {
@@ -105,25 +107,26 @@ export default async function handler(req, res) {
       }
 
       const result = await response.json();
-      console.log('Response data length:', result.data?.length || 0);
+      console.log('Response data keys:', Object.keys(result));
+      console.log('Prices array length:', result.prices?.length || 0);
 
-      if (!result.data || result.data.length === 0) {
-        errors.push(`${testCrypto.name}: No data returned`);
+      if (!result.prices || result.prices.length === 0) {
+        errors.push(`${testCrypto.name}: No price data returned`);
         return res.status(200).json({
           coins: [],
           errors: errors,
           debug: {
             url,
             responseKeys: Object.keys(result),
-            dataLength: result.data?.length || 0
+            pricesLength: result.prices?.length || 0
           },
           timestamp: new Date().toISOString(),
           timeframe: timeframe
         });
       }
 
-      // Convert to [timestamp, price] format
-      let prices = result.data.map(d => [d.time, parseFloat(d.priceUsd)]);
+      // Convert CoinGecko format [timestamp, price] - already in correct format
+      let prices = result.prices;
 
       // Aggregate to 4H if needed
       if (timeframeConfig.aggregate) {

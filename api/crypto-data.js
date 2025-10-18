@@ -1,7 +1,7 @@
 // api/crypto-data.js
 // Professional Binance API implementation with secure environment variables
 
-const crypto = require('crypto');
+import crypto from 'crypto';
 
 const CRYPTO_SYMBOLS = [
   { symbol: 'BTCUSDT', name: 'Bitcoin' },

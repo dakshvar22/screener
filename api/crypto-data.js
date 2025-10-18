@@ -80,8 +80,12 @@ export default async function handler(req, res) {
     for (const batch of batches) {
       const promises = batch.map(async (crypto) => {
         try {
-          // Coinbase Pro API endpoint
-          const url = `https://api.exchange.coinbase.com/products/${crypto.symbol}/candles?start=${start}&end=${now}&granularity=${timeframeConfig.granularity}`;
+          // Coinbase Pro API endpoint - use ISO timestamps
+          const startISO = new Date(start * 1000).toISOString();
+          const endISO = new Date(now * 1000).toISOString();
+          const url = `https://api.exchange.coinbase.com/products/${crypto.symbol}/candles?start=${startISO}&end=${endISO}&granularity=${timeframeConfig.granularity}`;
+
+          console.log('Fetching:', crypto.name, 'URL:', url);
 
           const response = await fetch(url, {
             headers: {
@@ -92,7 +96,8 @@ export default async function handler(req, res) {
 
           if (!response.ok) {
             const errorText = await response.text();
-            errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText}`);
+            console.log('Error for', crypto.name, ':', response.status, errorText);
+            errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText} - ${errorText}`);
             return null;
           }
 

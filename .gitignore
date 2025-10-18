@@ -1,1 +1,29 @@
+# IDE
 .idea
+.vscode
+
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Environment variables (SECURITY CRITICAL)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Build outputs
+dist/
+build/
+.next/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Vercel
+.vercel

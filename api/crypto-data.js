@@ -1,38 +1,53 @@
 // api/crypto-data.js
-// Vercel Serverless Function to fetch crypto data using Alpha Vantage
+// Professional Binance API implementation with secure environment variables
+
+const crypto = require('crypto');
 
 const CRYPTO_SYMBOLS = [
-  { symbol: 'BTC', name: 'Bitcoin' },
-  { symbol: 'ETH', name: 'Ethereum' },
-  { symbol: 'SOL', name: 'Solana' },
-  { symbol: 'XRP', name: 'XRP' },
-  { symbol: 'ADA', name: 'Cardano' },
-  { symbol: 'AVAX', name: 'Avalanche' },
-  { symbol: 'DOT', name: 'Polkadot' },
-  { symbol: 'MATIC', name: 'Polygon' },
-  { symbol: 'LINK', name: 'Chainlink' },
-  { symbol: 'UNI', name: 'Uniswap' },
-  { symbol: 'LTC', name: 'Litecoin' },
-  { symbol: 'DOGE', name: 'Dogecoin' }
+  { symbol: 'BTCUSDT', name: 'Bitcoin' },
+  { symbol: 'ETHUSDT', name: 'Ethereum' },
+  { symbol: 'BNBUSDT', name: 'BNB' },
+  { symbol: 'SOLUSDT', name: 'Solana' },
+  { symbol: 'XRPUSDT', name: 'XRP' },
+  { symbol: 'ADAUSDT', name: 'Cardano' },
+  { symbol: 'AVAXUSDT', name: 'Avalanche' },
+  { symbol: 'DOTUSDT', name: 'Polkadot' },
+  { symbol: 'MATICUSDT', name: 'Polygon' },
+  { symbol: 'LINKUSDT', name: 'Chainlink' },
+  { symbol: 'UNIUSDT', name: 'Uniswap' },
+  { symbol: 'LTCUSDT', name: 'Litecoin' },
+  { symbol: 'NEARUSDT', name: 'NEAR' },
+  { symbol: 'APTUSDT', name: 'Aptos' },
+  { symbol: 'ARBUSDT', name: 'Arbitrum' },
+  { symbol: 'OPUSDT', name: 'Optimism' },
+  { symbol: 'DOGEUSDT', name: 'Dogecoin' },
+  { symbol: 'XLMUSDT', name: 'Stellar' },
+  { symbol: 'ATOMUSDT', name: 'Cosmos' },
+  { symbol: 'INJUSDT', name: 'Injective' }
 ];
 
-// Alpha Vantage API key
-const API_KEY = 'JWP1USI7NXB04KOP';
-
-const aggregateCandles = (prices, interval) => {
-  if (!interval || interval === 1) return prices;
-
-  const aggregated = [];
-  for (let i = 0; i < prices.length; i += interval) {
-    if (i + interval - 1 < prices.length) {
-      const candle = prices.slice(i, i + interval);
-      const close = candle[candle.length - 1][1];
-      const timestamp = candle[0][0];
-      aggregated.push([timestamp, close]);
-    }
-  }
-  return aggregated;
+const TIMEFRAME_CONFIG = {
+  '1h': { interval: '1h', limit: 500 },
+  '4h': { interval: '4h', limit: 500 },
+  '1d': { interval: '1d', limit: 400 }
 };
+
+// Create HMAC signature for Binance API authentication
+function createSignature(queryString, secret) {
+  return crypto
+    .createHmac('sha256', secret)
+    .update(queryString)
+    .digest('hex');
+}
+
+// Build authenticated Binance API URL
+function buildBinanceUrl(symbol, interval, limit, apiKey, secret) {
+  const timestamp = Date.now();
+  const queryString = `symbol=${symbol}&interval=${interval}&limit=${limit}&timestamp=${timestamp}`;
+  const signature = createSignature(queryString, secret);
+
+  return `https://api.binance.com/api/v3/klines?${queryString}&signature=${signature}`;
+}
 
 export default async function handler(req, res) {
   // Enable CORS
@@ -44,104 +59,162 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  const { timeframe = '1d' } = req.query;
+  // Get API credentials from environment variables
+  const API_KEY = process.env.BINANCE_API_KEY;
+  const SECRET_KEY = process.env.BINANCE_SECRET_KEY;
 
-  // Alpha Vantage only provides daily data, so timeframe is informational only
-  console.log('Requested timeframe:', timeframe, '(using daily data for all timeframes)');
+  if (!API_KEY || !SECRET_KEY) {
+    return res.status(500).json({
+      error: 'Binance API credentials not configured',
+      coins: [],
+      errors: ['Missing BINANCE_API_KEY or BINANCE_SECRET_KEY environment variables'],
+      debug: {
+        message: 'API credentials required',
+        hasApiKey: !!API_KEY,
+        hasSecretKey: !!SECRET_KEY
+      }
+    });
+  }
+
+  const { timeframe = '4h' } = req.query;
+  const config = TIMEFRAME_CONFIG[timeframe];
+
+  if (!config) {
+    return res.status(400).json({
+      error: 'Invalid timeframe. Use 1h, 4h, or 1d',
+      coins: [],
+      errors: [`Invalid timeframe: ${timeframe}`]
+    });
+  }
 
   const results = [];
   const errors = [];
 
-  console.log('Starting crypto data fetch using Alpha Vantage...');
+  console.log(`Starting secure Binance API fetch for ${CRYPTO_SYMBOLS.length} symbols using ${timeframe} timeframe`);
 
   try {
-    console.log('Processing', CRYPTO_SYMBOLS.length, 'symbols');
+    // Process coins in batches to respect rate limits
+    const BATCH_SIZE = 10;
+    const batches = [];
 
-    // Process coins sequentially to avoid rate limits
-    for (const crypto of CRYPTO_SYMBOLS) {
-      try {
-        // Alpha Vantage daily crypto endpoint
-        const url = `https://www.alphavantage.co/query?function=DIGITAL_CURRENCY_DAILY&symbol=${crypto.symbol}&market=USD&apikey=${API_KEY}`;
+    for (let i = 0; i < CRYPTO_SYMBOLS.length; i += BATCH_SIZE) {
+      batches.push(CRYPTO_SYMBOLS.slice(i, i + BATCH_SIZE));
+    }
 
-        console.log('Fetching:', crypto.name);
+    for (const batch of batches) {
+      const promises = batch.map(async (crypto) => {
+        try {
+          const url = buildBinanceUrl(
+            crypto.symbol,
+            config.interval,
+            config.limit,
+            API_KEY,
+            SECRET_KEY
+          );
 
-        const response = await fetch(url, {
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'crypto-screener/1.0'
-          }
-        });
+          console.log(`Fetching ${crypto.name} (${crypto.symbol})`);
 
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.log('Error for', crypto.name, ':', response.status, errorText);
-          errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText}`);
-          continue;
-        }
-
-        const result = await response.json();
-
-        if (result.error || !result['Time Series (Digital Currency Daily)']) {
-          errors.push(`${crypto.name}: ${result.error || 'No time series data'}`);
-          continue;
-        }
-
-        // Convert Alpha Vantage format to [timestamp, price]
-        const timeSeries = result['Time Series (Digital Currency Daily)'];
-        const prices = Object.entries(timeSeries)
-          .map(([date, data]) => [
-            new Date(date).getTime(),
-            parseFloat(data['4a. close (USD)'])
-          ])
-          .sort((a, b) => a[0] - b[0]); // Sort by timestamp
-
-        // Take last 400 days to have enough data for 300-day MA
-        const recentPrices = prices.slice(-400);
-
-        if (recentPrices && recentPrices.length >= 300) {
-          results.push({
-            id: crypto.symbol,
-            name: crypto.name,
-            prices: recentPrices
+          const response = await fetch(url, {
+            headers: {
+              'Accept': 'application/json',
+              'X-MBX-APIKEY': API_KEY,
+              'User-Agent': 'crypto-screener/1.0'
+            }
           });
-          console.log(`✓ ${crypto.name}: ${recentPrices.length} data points`);
-        } else {
-          errors.push(`${crypto.name}: Not enough data (${recentPrices?.length || 0} days)`);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error(`HTTP Error for ${crypto.name}:`, response.status, errorText);
+            return { error: `${crypto.name}: HTTP ${response.status} - ${response.statusText}`, coin: null };
+          }
+
+          const result = await response.json();
+
+          if (!Array.isArray(result) || result.length === 0) {
+            console.error(`No kline data for ${crypto.name}`);
+            return { error: `${crypto.name}: No kline data returned`, coin: null };
+          }
+
+          // Convert Binance kline format to [timestamp, price]
+          // Binance returns: [openTime, open, high, low, close, volume, closeTime, ...]
+          const prices = result.map(kline => [
+            parseInt(kline[0]), // timestamp
+            parseFloat(kline[4]) // close price
+          ]);
+
+          // Ensure we have enough data for 300-period moving average
+          if (prices.length < 300) {
+            console.error(`Insufficient data for ${crypto.name}: ${prices.length} candles`);
+            return { error: `${crypto.name}: Only ${prices.length} data points (need 300+)`, coin: null };
+          }
+
+          console.log(`✓ ${crypto.name}: ${prices.length} data points`);
+
+          return {
+            error: null,
+            coin: {
+              id: crypto.symbol,
+              name: crypto.name,
+              prices: prices
+            }
+          };
+
+        } catch (err) {
+          console.error(`Exception for ${crypto.name}:`, err.message);
+          return { error: `${crypto.name}: ${err.message}`, coin: null };
         }
+      });
 
-        // Rate limiting - Alpha Vantage free tier allows 5 calls per minute
-        await new Promise(resolve => setTimeout(resolve, 12000)); // 12 second delay
+      // Wait for batch to complete
+      const batchResults = await Promise.all(promises);
 
-      } catch (err) {
-        console.error('Error for', crypto.name, ':', err);
-        errors.push(`${crypto.name}: ${err.message}`);
+      // Process batch results
+      batchResults.forEach(({ error, coin }) => {
+        if (error) {
+          errors.push(error);
+        } else if (coin) {
+          results.push(coin);
+        }
+      });
+
+      // Small delay between batches to respect rate limits
+      if (batches.indexOf(batch) < batches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
 
-    console.log('Successfully fetched', results.length, 'coins with', errors.length, 'errors');
+    const successCount = results.length;
+    const errorCount = errors.length;
+
+    console.log(`Binance API fetch completed: ${successCount} successful, ${errorCount} errors`);
 
     return res.status(200).json({
       coins: results,
       errors: errors,
       debug: {
-        message: 'All coins processed via Alpha Vantage API',
-        totalCoins: CRYPTO_SYMBOLS.length,
-        successfulCoins: results.length,
-        apiUsed: 'Alpha Vantage Daily Data'
+        message: 'Secure Binance API fetch completed',
+        totalRequested: CRYPTO_SYMBOLS.length,
+        successfulCoins: successCount,
+        failedCoins: errorCount,
+        timeframe: timeframe,
+        apiUsed: 'Binance (Authenticated)',
+        hasCredentials: true
       },
       timestamp: new Date().toISOString(),
       timeframe: timeframe
     });
 
   } catch (error) {
-    console.error('Fatal error:', error);
+    console.error('Fatal error in Binance API fetch:', error);
     return res.status(500).json({
       error: `Server error: ${error.message}`,
       coins: [],
-      errors: [error.message],
+      errors: [`Fatal error: ${error.message}`],
       debug: {
         stack: error.stack,
-        message: error.message
+        message: error.message,
+        timeframe: timeframe,
+        apiUsed: 'Binance (Authenticated)'
       }
     });
   }

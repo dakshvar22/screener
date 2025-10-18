@@ -1,0 +1,143 @@
+// api/crypto-data.js
+// Vercel Serverless Function to fetch crypto data
+
+const CRYPTO_IDS = [
+  { id: 'bitcoin', name: 'Bitcoin' },
+  { id: 'ethereum', name: 'Ethereum' },
+  { id: 'binance-coin', name: 'BNB' },
+  { id: 'solana', name: 'Solana' },
+  { id: 'ripple', name: 'XRP' },
+  { id: 'cardano', name: 'Cardano' },
+  { id: 'avalanche', name: 'Avalanche' },
+  { id: 'polkadot', name: 'Polkadot' },
+  { id: 'polygon', name: 'Polygon' },
+  { id: 'chainlink', name: 'Chainlink' },
+  { id: 'uniswap', name: 'Uniswap' },
+  { id: 'litecoin', name: 'Litecoin' },
+  { id: 'near-protocol', name: 'NEAR' },
+  { id: 'aptos', name: 'Aptos' },
+  { id: 'arbitrum', name: 'Arbitrum' },
+  { id: 'optimism', name: 'Optimism' },
+  { id: 'dogecoin', name: 'Dogecoin' },
+  { id: 'stellar', name: 'Stellar' },
+  { id: 'cosmos', name: 'Cosmos' },
+  { id: 'injective-protocol', name: 'Injective' }
+];
+
+const TIMEFRAME_CONFIG = {
+  '1h': { interval: 'h1', candles: 400 },
+  '4h': { interval: 'h1', candles: 400, aggregate: 4 },
+  '1d': { interval: 'd1', candles: 400 }
+};
+
+const aggregateCandles = (prices, interval) => {
+  if (!interval || interval === 1) return prices;
+
+  const aggregated = [];
+  for (let i = 0; i < prices.length; i += interval) {
+    if (i + interval - 1 < prices.length) {
+      const candle = prices.slice(i, i + interval);
+      const close = candle[candle.length - 1][1];
+      const timestamp = candle[0][0];
+      aggregated.push([timestamp, close]);
+    }
+  }
+  return aggregated;
+};
+
+export default async function handler(req, res) {
+  // Enable CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  const { timeframe = '4h' } = req.query;
+  const timeframeConfig = TIMEFRAME_CONFIG[timeframe];
+
+  if (!timeframeConfig) {
+    return res.status(400).json({ error: 'Invalid timeframe' });
+  }
+
+  const results = [];
+  const errors = [];
+
+  try {
+    // Fetch data for all coins in parallel
+    const promises = CRYPTO_IDS.map(async (crypto) => {
+      try {
+        const now = Date.now();
+        const candlesNeeded = timeframeConfig.aggregate ?
+          timeframeConfig.candles * timeframeConfig.aggregate :
+          timeframeConfig.candles;
+
+        let startTime, endTime;
+        if (timeframeConfig.interval === 'h1') {
+          startTime = now - (candlesNeeded * 60 * 60 * 1000);
+        } else {
+          startTime = now - (candlesNeeded * 24 * 60 * 60 * 1000);
+        }
+        endTime = now;
+
+        const url = `https://api.coincap.io/v2/assets/${crypto.id}/history?interval=${timeframeConfig.interval}&start=${startTime}&end=${endTime}`;
+
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          errors.push(`${crypto.name}: HTTP ${response.status}`);
+          return null;
+        }
+
+        const result = await response.json();
+
+        if (!result.data || result.data.length === 0) {
+          errors.push(`${crypto.name}: No data returned`);
+          return null;
+        }
+
+        // Convert to [timestamp, price] format
+        let prices = result.data.map(d => [d.time, parseFloat(d.priceUsd)]);
+
+        // Aggregate to 4H if needed
+        if (timeframeConfig.aggregate) {
+          prices = aggregateCandles(prices, timeframeConfig.aggregate);
+        }
+
+        if (prices && prices.length >= 300) {
+          return {
+            id: crypto.id,
+            name: crypto.name,
+            prices: prices
+          };
+        } else {
+          errors.push(`${crypto.name}: Not enough data (${prices?.length || 0} candles)`);
+          return null;
+        }
+      } catch (err) {
+        errors.push(`${crypto.name}: ${err.message}`);
+        return null;
+      }
+    });
+
+    const allResults = await Promise.all(promises);
+    results.push(...allResults.filter(r => r !== null));
+
+    return res.status(200).json({
+      coins: results,
+      errors: errors,
+      timestamp: new Date().toISOString(),
+      timeframe: timeframe
+    });
+
+  } catch (error) {
+    console.error('Fatal error:', error);
+    return res.status(500).json({
+      error: `Server error: ${error.message}`,
+      coins: [],
+      errors: [error.message]
+    });
+  }
+}

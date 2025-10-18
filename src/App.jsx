@@ -77,14 +77,24 @@ const CryptoScreener = () => {
     setFetchErrors([]);
 
     try {
+      console.log('Calling API endpoint...');
+      const apiUrl = `/api/crypto-data?timeframe=${filters.timeframe}`;
+      console.log('API URL:', apiUrl);
+
       // Call our serverless API endpoint
-      const response = await fetch(`/api/crypto-data?timeframe=${filters.timeframe}`);
+      const response = await fetch(apiUrl);
+
+      console.log('Response received:', response.status, response.statusText);
+      console.log('Response headers:', [...response.headers.entries()]);
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
+        const errorText = await response.text();
+        console.log('Error response body:', errorText);
+        throw new Error(`API error: ${response.status} - ${response.statusText} - ${errorText}`);
       }
 
       const data = await response.json();
+      console.log('API response data:', data);
 
       if (data.error) {
         setFetchErrors([data.error]);
@@ -117,7 +127,9 @@ const CryptoScreener = () => {
       }
     } catch (error) {
       console.error('Error fetching data:', error);
-      setFetchErrors([`Failed to fetch: ${error.message}`]);
+      console.error('Error stack:', error.stack);
+      console.error('Error type:', error.constructor.name);
+      setFetchErrors([`Failed to fetch: ${error.message} (${error.constructor.name})`]);
     }
 
     setLoading(false);

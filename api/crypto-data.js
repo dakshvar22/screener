@@ -78,69 +78,54 @@ export default async function handler(req, res) {
 
     console.log('Processing', CRYPTO_IDS.length, 'coins with', days, 'days of data');
 
-    // Process coins in batches to avoid rate limiting
-    const BATCH_SIZE = 5;
-    const batches = [];
+    // Process coins sequentially to avoid rate limiting
+    for (const crypto of CRYPTO_IDS) {
+      try {
+        const url = `https://api.coingecko.com/api/v3/coins/${crypto.id}/market_chart?vs_currency=usd&days=${days}`;
 
-    for (let i = 0; i < CRYPTO_IDS.length; i += BATCH_SIZE) {
-      batches.push(CRYPTO_IDS.slice(i, i + BATCH_SIZE));
-    }
-
-    for (const batch of batches) {
-      const promises = batch.map(async (crypto) => {
-        try {
-          const url = `https://api.coingecko.com/api/v3/coins/${crypto.id}/market_chart?vs_currency=usd&days=${days}`;
-
-          const response = await fetch(url, {
-            headers: {
-              'Accept': 'application/json',
-              'User-Agent': 'crypto-screener/1.0'
-            }
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText}`);
-            return null;
+        const response = await fetch(url, {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'crypto-screener/1.0'
           }
+        });
 
-          const result = await response.json();
-
-          if (!result.prices || result.prices.length === 0) {
-            errors.push(`${crypto.name}: No price data returned`);
-            return null;
-          }
-
-          // Convert CoinGecko format [timestamp, price] - already in correct format
-          let prices = result.prices;
-
-          // Aggregate to 4H if needed
-          if (timeframeConfig.aggregate) {
-            prices = aggregateCandles(prices, timeframeConfig.aggregate);
-          }
-
-          if (prices && prices.length >= 200) {
-            return {
-              id: crypto.id,
-              name: crypto.name,
-              prices: prices
-            };
-          } else {
-            errors.push(`${crypto.name}: Not enough data (${prices?.length || 0} candles)`);
-            return null;
-          }
-        } catch (err) {
-          errors.push(`${crypto.name}: ${err.message}`);
-          return null;
+        if (!response.ok) {
+          const errorText = await response.text();
+          errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText}`);
+          continue;
         }
-      });
 
-      const batchResults = await Promise.all(promises);
-      results.push(...batchResults.filter(r => r !== null));
+        const result = await response.json();
 
-      // Small delay between batches to respect rate limits
-      if (batches.indexOf(batch) < batches.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+        if (!result.prices || result.prices.length === 0) {
+          errors.push(`${crypto.name}: No price data returned`);
+          continue;
+        }
+
+        // Convert CoinGecko format [timestamp, price] - already in correct format
+        let prices = result.prices;
+
+        // Aggregate to 4H if needed
+        if (timeframeConfig.aggregate) {
+          prices = aggregateCandles(prices, timeframeConfig.aggregate);
+        }
+
+        if (prices && prices.length >= 200) {
+          results.push({
+            id: crypto.id,
+            name: crypto.name,
+            prices: prices
+          });
+        } else {
+          errors.push(`${crypto.name}: Not enough data (${prices?.length || 0} candles)`);
+        }
+
+        // Delay between each request to respect rate limits
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+      } catch (err) {
+        errors.push(`${crypto.name}: ${err.message}`);
       }
     }
 

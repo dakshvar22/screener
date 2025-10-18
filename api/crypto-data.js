@@ -1,29 +1,23 @@
 // api/crypto-data.js
-// Vercel Serverless Function to fetch crypto data
+// Vercel Serverless Function to fetch crypto data using Alpha Vantage
 
 const CRYPTO_SYMBOLS = [
-  { symbol: 'BTC-USD', name: 'Bitcoin' },
-  { symbol: 'ETH-USD', name: 'Ethereum' },
-  { symbol: 'SOL-USD', name: 'Solana' },
-  { symbol: 'XRP-USD', name: 'XRP' },
-  { symbol: 'ADA-USD', name: 'Cardano' },
-  { symbol: 'AVAX-USD', name: 'Avalanche' },
-  { symbol: 'DOT-USD', name: 'Polkadot' },
-  { symbol: 'MATIC-USD', name: 'Polygon' },
-  { symbol: 'LINK-USD', name: 'Chainlink' },
-  { symbol: 'UNI-USD', name: 'Uniswap' },
-  { symbol: 'LTC-USD', name: 'Litecoin' },
-  { symbol: 'NEAR-USD', name: 'NEAR' },
-  { symbol: 'DOGE-USD', name: 'Dogecoin' },
-  { symbol: 'XLM-USD', name: 'Stellar' },
-  { symbol: 'ATOM-USD', name: 'Cosmos' }
+  { symbol: 'BTC', name: 'Bitcoin' },
+  { symbol: 'ETH', name: 'Ethereum' },
+  { symbol: 'SOL', name: 'Solana' },
+  { symbol: 'XRP', name: 'XRP' },
+  { symbol: 'ADA', name: 'Cardano' },
+  { symbol: 'AVAX', name: 'Avalanche' },
+  { symbol: 'DOT', name: 'Polkadot' },
+  { symbol: 'MATIC', name: 'Polygon' },
+  { symbol: 'LINK', name: 'Chainlink' },
+  { symbol: 'UNI', name: 'Uniswap' },
+  { symbol: 'LTC', name: 'Litecoin' },
+  { symbol: 'DOGE', name: 'Dogecoin' }
 ];
 
-const TIMEFRAME_CONFIG = {
-  '1h': { granularity: 3600, candles: 300 },    // 1 hour (3600s) - supported by Coinbase
-  '4h': { granularity: 3600, candles: 1200, aggregate: 4 },   // Use 1h data and aggregate to 4h
-  '1d': { granularity: 86400, candles: 300 }    // 1 day (86400s) - supported by Coinbase
-};
+// Alpha Vantage free demo key - replace with your own for production
+const API_KEY = 'demo';
 
 const aggregateCandles = (prices, interval) => {
   if (!interval || interval === 1) return prices;
@@ -60,88 +54,69 @@ export default async function handler(req, res) {
   const results = [];
   const errors = [];
 
-  console.log('Starting crypto data fetch...');
+  console.log('Starting crypto data fetch using Alpha Vantage...');
 
   try {
-    console.log('Processing', CRYPTO_SYMBOLS.length, 'symbols with', timeframeConfig.candles, 'candles');
+    console.log('Processing', CRYPTO_SYMBOLS.length, 'symbols');
 
-    // Calculate time range
-    const now = Math.floor(Date.now() / 1000);
-    const start = now - (timeframeConfig.candles * timeframeConfig.granularity);
+    // Process coins sequentially to avoid rate limits
+    for (const crypto of CRYPTO_SYMBOLS) {
+      try {
+        // Alpha Vantage daily crypto endpoint
+        const url = `https://www.alphavantage.co/query?function=DIGITAL_CURRENCY_DAILY&symbol=${crypto.symbol}&market=USD&apikey=${API_KEY}`;
 
-    // Process coins in batches - Coinbase has good rate limits
-    const BATCH_SIZE = 5;
-    const batches = [];
+        console.log('Fetching:', crypto.name);
 
-    for (let i = 0; i < CRYPTO_SYMBOLS.length; i += BATCH_SIZE) {
-      batches.push(CRYPTO_SYMBOLS.slice(i, i + BATCH_SIZE));
-    }
-
-    for (const batch of batches) {
-      const promises = batch.map(async (crypto) => {
-        try {
-          // Coinbase Pro API endpoint - use ISO timestamps
-          const startISO = new Date(start * 1000).toISOString();
-          const endISO = new Date(now * 1000).toISOString();
-          const url = `https://api.exchange.coinbase.com/products/${crypto.symbol}/candles?start=${startISO}&end=${endISO}&granularity=${timeframeConfig.granularity}`;
-
-          console.log('Fetching:', crypto.name, 'URL:', url);
-
-          const response = await fetch(url, {
-            headers: {
-              'Accept': 'application/json',
-              'User-Agent': 'crypto-screener/1.0'
-            }
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.log('Error for', crypto.name, ':', response.status, errorText);
-            errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText} - ${errorText}`);
-            return null;
+        const response = await fetch(url, {
+          headers: {
+            'Accept': 'application/json',
+            'User-Agent': 'crypto-screener/1.0'
           }
+        });
 
-          const result = await response.json();
-
-          if (!result || result.length === 0) {
-            errors.push(`${crypto.name}: No candle data returned`);
-            return null;
-          }
-
-          // Convert Coinbase format to [timestamp, price]
-          // Coinbase returns: [timestamp, low, high, open, close, volume]
-          let prices = result.map(candle => [candle[0] * 1000, parseFloat(candle[4])]); // [timestamp in ms, close price]
-
-          // Sort by timestamp (Coinbase returns newest first)
-          prices.sort((a, b) => a[0] - b[0]);
-
-          // Aggregate to 4H if needed
-          if (timeframeConfig.aggregate) {
-            prices = aggregateCandles(prices, timeframeConfig.aggregate);
-          }
-
-          if (prices && prices.length >= 200) {
-            return {
-              id: crypto.symbol,
-              name: crypto.name,
-              prices: prices
-            };
-          } else {
-            errors.push(`${crypto.name}: Not enough data (${prices?.length || 0} candles)`);
-            return null;
-          }
-        } catch (err) {
-          errors.push(`${crypto.name}: ${err.message}`);
-          return null;
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.log('Error for', crypto.name, ':', response.status, errorText);
+          errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText}`);
+          continue;
         }
-      });
 
-      const batchResults = await Promise.all(promises);
-      results.push(...batchResults.filter(r => r !== null));
+        const result = await response.json();
 
-      // Small delay between batches
-      if (batches.indexOf(batch) < batches.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 200));
+        if (result.error || !result['Time Series (Digital Currency Daily)']) {
+          errors.push(`${crypto.name}: ${result.error || 'No time series data'}`);
+          continue;
+        }
+
+        // Convert Alpha Vantage format to [timestamp, price]
+        const timeSeries = result['Time Series (Digital Currency Daily)'];
+        const prices = Object.entries(timeSeries)
+          .map(([date, data]) => [
+            new Date(date).getTime(),
+            parseFloat(data['4a. close (USD)'])
+          ])
+          .sort((a, b) => a[0] - b[0]); // Sort by timestamp
+
+        // Take last 400 days to have enough data for 300-day MA
+        const recentPrices = prices.slice(-400);
+
+        if (recentPrices && recentPrices.length >= 300) {
+          results.push({
+            id: crypto.symbol,
+            name: crypto.name,
+            prices: recentPrices
+          });
+          console.log(`✓ ${crypto.name}: ${recentPrices.length} data points`);
+        } else {
+          errors.push(`${crypto.name}: Not enough data (${recentPrices?.length || 0} days)`);
+        }
+
+        // Rate limiting - Alpha Vantage free tier allows 5 calls per minute
+        await new Promise(resolve => setTimeout(resolve, 12000)); // 12 second delay
+
+      } catch (err) {
+        console.error('Error for', crypto.name, ':', err);
+        errors.push(`${crypto.name}: ${err.message}`);
       }
     }
 
@@ -151,10 +126,10 @@ export default async function handler(req, res) {
       coins: results,
       errors: errors,
       debug: {
-        message: 'All coins processed via Coinbase API',
+        message: 'All coins processed via Alpha Vantage API',
         totalCoins: CRYPTO_SYMBOLS.length,
         successfulCoins: results.length,
-        timeframeConfig: timeframeConfig
+        apiUsed: 'Alpha Vantage Daily Data'
       },
       timestamp: new Date().toISOString(),
       timeframe: timeframe

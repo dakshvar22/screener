@@ -1,33 +1,33 @@
 // api/crypto-data.js
 // Vercel Serverless Function to fetch crypto data
 
-const CRYPTO_IDS = [
-  { id: 'bitcoin', name: 'Bitcoin' },
-  { id: 'ethereum', name: 'Ethereum' },
-  { id: 'binancecoin', name: 'BNB' },
-  { id: 'solana', name: 'Solana' },
-  { id: 'ripple', name: 'XRP' },
-  { id: 'cardano', name: 'Cardano' },
-  { id: 'avalanche-2', name: 'Avalanche' },
-  { id: 'polkadot', name: 'Polkadot' },
-  { id: 'matic-network', name: 'Polygon' },
-  { id: 'chainlink', name: 'Chainlink' },
-  { id: 'uniswap', name: 'Uniswap' },
-  { id: 'litecoin', name: 'Litecoin' },
-  { id: 'near', name: 'NEAR' },
-  { id: 'aptos', name: 'Aptos' },
-  { id: 'arbitrum', name: 'Arbitrum' },
-  { id: 'optimism', name: 'Optimism' },
-  { id: 'dogecoin', name: 'Dogecoin' },
-  { id: 'stellar', name: 'Stellar' },
-  { id: 'cosmos', name: 'Cosmos' },
-  { id: 'injective-protocol', name: 'Injective' }
+const CRYPTO_SYMBOLS = [
+  { symbol: 'BTCUSDT', name: 'Bitcoin' },
+  { symbol: 'ETHUSDT', name: 'Ethereum' },
+  { symbol: 'BNBUSDT', name: 'BNB' },
+  { symbol: 'SOLUSDT', name: 'Solana' },
+  { symbol: 'XRPUSDT', name: 'XRP' },
+  { symbol: 'ADAUSDT', name: 'Cardano' },
+  { symbol: 'AVAXUSDT', name: 'Avalanche' },
+  { symbol: 'DOTUSDT', name: 'Polkadot' },
+  { symbol: 'MATICUSDT', name: 'Polygon' },
+  { symbol: 'LINKUSDT', name: 'Chainlink' },
+  { symbol: 'UNIUSDT', name: 'Uniswap' },
+  { symbol: 'LTCUSDT', name: 'Litecoin' },
+  { symbol: 'NEARUSDT', name: 'NEAR' },
+  { symbol: 'APTUSDT', name: 'Aptos' },
+  { symbol: 'ARBUSDT', name: 'Arbitrum' },
+  { symbol: 'OPUSDT', name: 'Optimism' },
+  { symbol: 'DOGEUSDT', name: 'Dogecoin' },
+  { symbol: 'XLMUSDT', name: 'Stellar' },
+  { symbol: 'ATOMUSDT', name: 'Cosmos' },
+  { symbol: 'INJUSDT', name: 'Injective' }
 ];
 
 const TIMEFRAME_CONFIG = {
-  '1h': { interval: 'h1', candles: 300 },
-  '4h': { interval: 'h1', candles: 300, aggregate: 4 },
-  '1d': { interval: 'd1', candles: 300 }
+  '1h': { interval: '1h', limit: 500 },
+  '4h': { interval: '4h', limit: 500 },
+  '1d': { interval: '1d', limit: 500 }
 };
 
 const aggregateCandles = (prices, interval) => {
@@ -68,64 +68,68 @@ export default async function handler(req, res) {
   console.log('Starting crypto data fetch...');
 
   try {
-    // Calculate common parameters
-    const now = Date.now();
-    const candlesNeeded = timeframeConfig.aggregate ?
-      timeframeConfig.candles * timeframeConfig.aggregate :
-      timeframeConfig.candles;
+    console.log('Processing', CRYPTO_SYMBOLS.length, 'symbols with', timeframeConfig.limit, 'candles');
 
-    const days = Math.min(Math.max(Math.ceil(candlesNeeded / 24), 2), 90);
+    // Process coins in batches - Binance has much higher rate limits
+    const BATCH_SIZE = 10;
+    const batches = [];
 
-    console.log('Processing', CRYPTO_IDS.length, 'coins with', days, 'days of data');
+    for (let i = 0; i < CRYPTO_SYMBOLS.length; i += BATCH_SIZE) {
+      batches.push(CRYPTO_SYMBOLS.slice(i, i + BATCH_SIZE));
+    }
 
-    // Process coins sequentially to avoid rate limiting
-    for (const crypto of CRYPTO_IDS) {
-      try {
-        const url = `https://api.coingecko.com/api/v3/coins/${crypto.id}/market_chart?vs_currency=usd&days=${days}`;
+    for (const batch of batches) {
+      const promises = batch.map(async (crypto) => {
+        try {
+          // Binance klines API endpoint
+          const url = `https://api.binance.com/api/v3/klines?symbol=${crypto.symbol}&interval=${timeframeConfig.interval}&limit=${timeframeConfig.limit}`;
 
-        const response = await fetch(url, {
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'crypto-screener/1.0'
-          }
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText}`);
-          continue;
-        }
-
-        const result = await response.json();
-
-        if (!result.prices || result.prices.length === 0) {
-          errors.push(`${crypto.name}: No price data returned`);
-          continue;
-        }
-
-        // Convert CoinGecko format [timestamp, price] - already in correct format
-        let prices = result.prices;
-
-        // Aggregate to 4H if needed
-        if (timeframeConfig.aggregate) {
-          prices = aggregateCandles(prices, timeframeConfig.aggregate);
-        }
-
-        if (prices && prices.length >= 200) {
-          results.push({
-            id: crypto.id,
-            name: crypto.name,
-            prices: prices
+          const response = await fetch(url, {
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'crypto-screener/1.0'
+            }
           });
-        } else {
-          errors.push(`${crypto.name}: Not enough data (${prices?.length || 0} candles)`);
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            errors.push(`${crypto.name}: HTTP ${response.status} - ${response.statusText}`);
+            return null;
+          }
+
+          const result = await response.json();
+
+          if (!result || result.length === 0) {
+            errors.push(`${crypto.name}: No kline data returned`);
+            return null;
+          }
+
+          // Convert Binance kline format to [timestamp, price]
+          // Binance returns: [openTime, open, high, low, close, volume, closeTime, ...]
+          const prices = result.map(kline => [kline[0], parseFloat(kline[4])]); // [timestamp, close price]
+
+          if (prices && prices.length >= 200) {
+            return {
+              id: crypto.symbol,
+              name: crypto.name,
+              prices: prices
+            };
+          } else {
+            errors.push(`${crypto.name}: Not enough data (${prices?.length || 0} candles)`);
+            return null;
+          }
+        } catch (err) {
+          errors.push(`${crypto.name}: ${err.message}`);
+          return null;
         }
+      });
 
-        // Delay between each request to respect rate limits
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      const batchResults = await Promise.all(promises);
+      results.push(...batchResults.filter(r => r !== null));
 
-      } catch (err) {
-        errors.push(`${crypto.name}: ${err.message}`);
+      // Small delay between batches
+      if (batches.indexOf(batch) < batches.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
 
@@ -135,8 +139,8 @@ export default async function handler(req, res) {
       coins: results,
       errors: errors,
       debug: {
-        message: 'All coins processed',
-        totalCoins: CRYPTO_IDS.length,
+        message: 'All coins processed via Binance API',
+        totalCoins: CRYPTO_SYMBOLS.length,
         successfulCoins: results.length,
         timeframeConfig: timeframeConfig
       },

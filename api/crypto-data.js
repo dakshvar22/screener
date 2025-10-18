@@ -71,8 +71,8 @@ export default async function handler(req, res) {
       endTime = now;
 
       // Use CoinGecko API instead of CoinCap since CoinCap DNS is failing
-      const days = Math.ceil(candlesNeeded / 24); // Convert candles to days
-      const url = `https://api.coingecko.com/api/v3/coins/${testCrypto.id}/market_chart?vs_currency=usd&days=${days}&interval=hourly`;
+      const days = Math.min(Math.max(Math.ceil(candlesNeeded / 24), 2), 90); // CoinGecko auto-provides hourly for 2-90 days
+      const url = `https://api.coingecko.com/api/v3/coins/${testCrypto.id}/market_chart?vs_currency=usd&days=${days}`;
 
       console.log('Fetching URL:', url);
       console.log('Days requested:', days);
